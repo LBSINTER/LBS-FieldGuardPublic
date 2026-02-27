@@ -1,0 +1,133 @@
+name: Android APK Release
+
+on:
+  repository_dispatch:
+    types: [build_apk]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. v1.0.3)'
+        required: true
+        default: 'v1.0.3'
+
+jobs:
+  build-apk:
+    name: Build release APK
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout private source repo
+        uses: actions/checkout@v4
+        with:
+          repository: LBSINTER/LBS-FieldGuard
+          token: ${{ secrets.SOURCE_PAT }}
+          ref: ${{ github.event.client_payload.tag || github.event.inputs.tag }}
+          fetch-depth: 0
+
+      - name: Set build tag
+        id: tag
+        run: |
+          TAG="${{ github.event.client_payload.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          fi
+          APK_NAME="LBS-FieldGuard-${TAG}.apk"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "apk_name=${APK_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install npm dependencies
+        run: npm ci --prefer-offline
+
+      - name: Set up keystore and signing config
+        env:
+          KEYSTORE_B64: ${{ secrets.FIELDGUARD_KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.FIELDGUARD_KEY_ALIAS }}
+          STORE_PASSWORD: ${{ secrets.FIELDGUARD_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.FIELDGUARD_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 --decode > android/app/fieldguard-release.keystore
+            cat >> android/gradle.properties << EOF
+          FIELDGUARD_UPLOAD_STORE_FILE=fieldguard-release.keystore
+          FIELDGUARD_UPLOAD_KEY_ALIAS=${KEY_ALIAS}
+          FIELDGUARD_UPLOAD_STORE_PASSWORD=${STORE_PASSWORD}
+          FIELDGUARD_UPLOAD_KEY_PASSWORD=${KEY_PASSWORD}
+          EOF
+          else
+            keytool -genkeypair -v \
+              -keystore android/app/debug.keystore \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=LBS FieldGuard, OU=LBS, O=LBS INT, L=Unknown, S=Unknown, C=US" \
+              2>/dev/null || true
+          fi
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Bundle JS (Metro)
+        run: |
+          mkdir -p android/app/src/main/assets
+          npx react-native bundle \
+            --platform android \
+            --dev false \
+            --entry-file index.js \
+            --bundle-output android/app/src/main/assets/index.android.bundle \
+            --assets-dest android/app/src/main/res
+
+      - name: Build release APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Rename APK
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk \
+            "${{ steps.tag.outputs.apk_name }}"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.tag.outputs.apk_name }}
+          path: ${{ steps.tag.outputs.apk_name }}
+          retention-days: 30
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          APK: ${{ steps.tag.outputs.apk_name }}
+        run: |
+          printf "LBS FieldGuard %s\n\nDownload the APK attached below.\n\nSideload:\n  1. Copy the APK to the device.\n  2. Settings > allow installation from unknown sources.\n  3. Tap the APK to install.\n\nADB:\n  adb install %s\n\nRequired permissions:\n  RECEIVE_SMS / READ_SMS       RIL layer SMS intercept\n  READ_PHONE_STATE             IMSI and cell tower info\n  BIND_VPN_SERVICE             Packet capture via TUN\n  MANAGE_EXTERNAL_STORAGE      File scanner\n\nMinimum: Android 8.0 (API 26)\n" \
+            "$TAG" "$APK" > /tmp/relnotes.md
+          gh release create "${TAG}" "${APK}" \
+            --repo LBSINTER/LBS-FieldGuardPublic \
+            --title "LBS FieldGuard ${TAG}" \
+            --notes-file /tmp/relnotes.md \
+            --latest \
+          || gh release upload "${TAG}" "${APK}" \
+               --repo LBSINTER/LBS-FieldGuardPublic \
+               --clobber
