@@ -7,7 +7,7 @@ known Pegasus / NSO indicators.
 This repo only hosts the public builds. The source lives in a private repo;
 contact below if you need access.
 
-**Latest build:** `LBS-FieldGuard-v1.1.1.apk` (in this repo, root directory).
+**Latest build:** `LBS-FieldGuard-v1.1.2.apk` (in this repo, root directory).
 
 Other downloads (always-current mirror): https://fieldguard.lbs-int.com/#download
 
@@ -17,7 +17,7 @@ Other downloads (always-current mirror): https://fieldguard.lbs-int.com/#downloa
 
 Minimum: Android 8.0 (API 26). Architectures: arm64-v8a, x86_64.
 
-1. Download `LBS-FieldGuard-v1.1.1.apk`.
+1. Download `LBS-FieldGuard-v1.1.2.apk`.
 2. On the phone, allow "install unknown apps" for the file manager or browser
    you used to open it (path varies by manufacturer — Settings > Apps, or
    Settings > Privacy on most phones).
@@ -26,7 +26,7 @@ Minimum: Android 8.0 (API 26). Architectures: arm64-v8a, x86_64.
 Or via adb:
 
 ```
-adb install LBS-FieldGuard-v1.1.1.apk
+adb install LBS-FieldGuard-v1.1.2.apk
 ```
 
 > Note: the v1.1.x builds are debug-keyed. If you have an older release
@@ -93,6 +93,12 @@ Settings.
   registration).
 - **1.1.1** — In-app updater now talks to the LBS update server first
   (faster, no GitHub rate limits); native update notifications.
+- **1.1.2** — Fixes:
+    - Crash on first launch right after a successful sign-in (PGP keypair
+      generation was racing with the navigator mount; now finished before
+      the screen flips).
+    - Bottom-nav quick-menu sometimes opened off-screen and without an
+      animation; now slides up as a proper bottom sheet.
 
 ---
 
